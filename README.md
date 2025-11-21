@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  
 </head>
 <body>
 
@@ -54,11 +53,11 @@
 
 <h2 id="installation">Installation</h2>
 
-<h3>Quick install via curl</h3>
+<h3>Recommended: run as a sourced script (auto-reload)</h3>
 
-<p>Run this in your terminal:</p>
+<p>This form runs the installer inside your current shell, so it can reload your shell configuration automatically if it appends to your rc file.</p>
 
-<pre><code>curl -sSL https://raw.githubusercontent.com/jspackiaraj/mko/main/install.sh | bash
+<pre><code>source &lt;(curl -sSL https://raw.githubusercontent.com/jspackiaraj/mko/main/install.sh)
 </code></pre>
 
 <p>This will:</p>
@@ -67,14 +66,27 @@
   <li>Make it executable.</li>
   <li>Add <code>$HOME/.local/bin</code> to your <code>PATH</code> in your shell config
       (for example <code>~/.bashrc</code> or <code>~/.zshrc</code>) if it is not already there.</li>
+  <li><strong>Reload the relevant rc file</strong> in the current shell so <code>mko</code> becomes available immediately.</li>
 </ol>
 
-<p>After installation, either open a new terminal or reload your shell config, e.g.:</p>
+<p>After it finishes, you should be able to run:</p>
 
-<pre><code>source ~/.bashrc
-# or
-source ~/.zshrc
+<pre><code>mko --help
 </code></pre>
+
+<h3>Alternative: classic pipe install</h3>
+
+<p>If you prefer the usual <code>curl | bash</code> style, use:</p>
+
+<pre><code>curl -sSL https://raw.githubusercontent.com/jspackiaraj/mko/main/install.sh | bash
+</code></pre>
+
+<p>This does the same file operations as above, but runs in a child shell. It cannot modify the environment of your existing terminal session. After it finishes:</p>
+
+<ul>
+  <li>Either open a new terminal, or</li>
+  <li>Run <code>source</code> on the rc file mentioned by the installer output (for example <code>source ~/.bashrc</code>).</li>
+</ul>
 
 <p>Then test:</p>
 
@@ -231,7 +243,8 @@ mko --set-editor nvim
 
 <ol>
   <li>Detect the distribution via <code>/etc/os-release</code>.</li>
-  <li>Prompt:
+  <li>Check whether <code>sudo</code> is available.</li>
+  <li>If <code>sudo</code> is present, prompt:
     <pre><code>Editor 'nvim' is not installed. Attempt to install it now (requires sudo)? [y/N]</code></pre>
   </li>
   <li>On Ubuntu / Debian, run (only if you answer <code>y</code>):
@@ -246,13 +259,9 @@ sudo apt install -y nano      # or neovim
   <li>On other distributions, print an error and ask you to install the editor manually.</li>
 </ol>
 
-<p>If <code>sudo</code> is not available at all, <code>mko</code> prints explicit instructions with example package-manager commands and exits, so you can:</p>
-<ul>
-  <li>Ask an administrator to install <code>nano</code> or <code>neovim</code>, or</li>
-  <li>Install them yourself as root using your distribution’s package manager.</li>
-</ul>
+<p>If <code>sudo</code> is not available, <code>mko</code> prints explicit instructions with example package-manager commands for Ubuntu/Debian and Arch-based systems, or a generic message for others, and exits without attempting installation.</p>
 
-<p>If installation via <code>sudo</code> fails (for example you are not in the sudoers list or there is a network problem), <code>mko</code> reports the failure and asks you to install the editor manually before trying again.</p>
+<p>If installation via <code>sudo</code> fails (for example you are not in the sudoers list or there is a network issue), <code>mko</code> reports the failure and asks you to install the editor manually as root before trying again.</p>
 
 <p>In <code>--dry-run</code> mode, <code>mko</code> only reports that it would attempt installation; it does not run any package-manager commands.</p>
 
@@ -315,11 +324,11 @@ sudo apt install -y nano      # or neovim
 <p>These public projects provide related functionality in the general area of file creation and command-line helpers:</p>
 
 <ul>
-  <li><code>fuyalasmit/mkfile-cli</code></li>
-  <li>Various shell helper collections that combine file and directory utilities.</li>
+  <li><code>fuyalasmit/mkfile-cli</code> – a command-line utility focused on creating files along with missing parent directories in a single step.</li>
+  <li>Shell helper collections that combine file and directory utilities into small command-line tools.</li>
 </ul>
 
-<p>This project focuses specifically on a single command that prepares the path (directories and file) and then opens the last file in a text editor, with small quality-of-life features for everyday development.</p>
+<p>This project focuses on a single command that prepares the path (directories and file) and then opens the last file in a text editor, with small quality-of-life features for everyday development.</p>
 
 <hr>
 
