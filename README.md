@@ -10,7 +10,7 @@
 <p><strong>mko</strong> is a small Bash helper for Linux that combines:</p>
 <ul>
   <li><code>mkdir -p</code> – create parent directories if they do not exist,</li>
-  <li><code>touch</code> – create files if they do not exist,</li>
+  <li><code>touch</code> – create file(s) if they do not exist,</li>
   <li>and opening <strong>only the last file</strong> in your chosen editor (<code>nano</code> or <code>nvim</code>).</li>
 </ul>
 
