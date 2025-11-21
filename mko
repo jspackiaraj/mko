@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+#
+# mko - create missing directories/files and open the last file in an editor.
+# Supports: dry-run, silent mode, logging, colours, multiple files,
+#           persistent editor choice, and auto-install of nano/nvim on
+#           Ubuntu / Arch-based systems.
+
+set -euo pipefail
+
+DRY_RUN=0
+SILENT=0
+FORCE=0
+EDITOR_OVERRIDE=""
+SET_EDITOR=""
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mko"
+CONFIG_FILE="${CONFIG_DIR}/config"
+LOG_FILE="$HOME/.mko.log"
+
+print_usage() {
+  cat <<'EOF'
+mko - create missing directories/files and open the last file in nano or nvim.
+
+Usage:
+  mko [options] FILE...
+
+Options:
+  -n, --dry-run         Show what would be done; do not create or open anything.
+  -s, --silent          Suppress informational output (errors still shown).
+  -f, --force           Do not ask before opening an existing non-empty file.
+  -e, --editor EDITOR   Use EDITOR (nano or nvim) for this run only.
+      --set-editor E    Persistently set default editor to nano or nvim.
+  -h, --help            Show this help and exit.
+
+Behaviour:
+  - Creates parent directories with mkdir -p.
+  - Creates any missing files with touch.
+  - Only opens the LAST file argument in the chosen editor.
+  - Logs real actions to ~/.mko.log (not logged in dry-run mode).
+  - If nano/nvim is chosen but not installed, offers to install it on
+    Ubuntu / Arch-based systems (using sudo if available).
+EOF
+}
+
+# --- Parse arguments ---
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run)
+      DRY_RUN=1
+      ;;
+    -s|--silent)
+      SILENT=1
+      ;;
+    -f|--force)
+      FORCE=1
+      ;;
+    -e|--editor)
+      shift || { echo "Error: --editor requires an argument." >&2; exit 1; }
+      case "${1:-}" in
+        nano|nvim) EDITOR_OVERRIDE="$1" ;;
+        *) echo "Error: --editor must be 'nano' or 'nvim'." >&2; exit 1 ;;
+      esac
+      ;;
+    --set-editor)
+      shift || { echo "Error: --set-editor requires an argument." >&2; exit 1; }
+      case "${1:-}" in
+        nano|nvim) SET_EDITOR="$1" ;;
+        *) echo "Error: --set-editor must be 'nano' or 'nvim'." >&2; exit 1 ;;
+      esac
+      ;;
+    -h|--help)
+      print_usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+  shift
+done
+
+# --- Colours (disabled in silent mode or non-TTY) ---
+if [ -t 1 ] && [ "$SILENT" -eq 0 ]; then
+  GREEN='\033[0;32m'
+  BLUE='\033[0;34m'
+  YELLOW='\033[0;33m'
+  RESET='\033[0m'
+else
+  GREEN=''; BLUE=''; YELLOW=''; RESET=''
+fi
+
+info() {
+  [ "$SILENT" -eq 0 ] && printf '%b\n' "$*"
+}
+
+log_msg() {
+  # Log only real actions (no logging in dry-run mode)
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local msg="$1"
+  {
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$msg"
+  } >>"$LOG_FILE" 2>/dev/null || true
+}
+
+# --- Handle persistent editor configuration ---
+if [ -n "$SET_EDITOR" ]; then
+  mkdir -p "$CONFIG_DIR" || {
+    echo "Error: cannot create config directory: $CONFIG_DIR" >&2
+    exit 1
+  }
+  printf 'EDITOR_CHOICE=%s\n' "$SET_EDITOR" >"$CONFIG_FILE"
+  [ "$SILENT" -eq 0 ] && echo "Default editor set to: $SET_EDITOR"
+fi
+
+# Load config if present
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+
+# If no files and only --set-editor was used, exit successfully
+if [ $# -eq 0 ]; then
+  if [ -n "$SET_EDITOR" ]; then
+    exit 0
+  fi
+  echo "Usage: mko [options] FILE..." >&2
+  exit 1
+fi
+
+# --- Resolve desired editor name ---
+resolve_editor() {
+  if [ -n "$EDITOR_OVERRIDE" ]; then
+    echo "$EDITOR_OVERRIDE"
+    return
+  fi
+
+  if [ -n "${EDITOR_CHOICE:-}" ]; then
+    echo "$EDITOR_CHOICE"
+    return
+  fi
+
+  # Respect $EDITOR if it's nano or nvim
+  if [ -n "${EDITOR:-}" ] && { [ "$EDITOR" = "nano" ] || [ "$EDITOR" = "nvim" ]; }; then
+    echo "$EDITOR"
+    return
+  fi
+
+  # Fallback: prefer nvim if installed, else nano
+  if command -v nvim >/dev/null 2>&1; then
+    echo "nvim"
+  else
+    echo "nano"
+  fi
+}
+
+# --- Auto-install editor if missing (Ubuntu / Arch) ---
+ensure_editor_installed() {
+  local ed="$1"
+
+  if command -v "$ed" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    info "${YELLOW}Editor '$ed' is not installed. Dry-run: would attempt to install it on this system.${RESET}"
+    return 0
+  fi
+
+  # If sudo is not available, give clear instructions and exit.
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "Error: editor '$ed' is not installed and 'sudo' is not available." >&2
+    if [ -r /etc/os-release ]; then
+      # shellcheck source=/dev/null
+      . /etc/os-release
+      case "$ID" in
+        ubuntu|debian)
+          echo "Install '$ed' as root, for example:" >&2
+          if [ "$ed" = "nvim" ]; then
+            echo "  apt update && apt install neovim" >&2
+          else
+            echo "  apt update && apt install nano" >&2
+          fi
+          ;;
+        arch|manjaro|endeavouros|arcolinux)
+          echo "Install '$ed' as root, for example:" >&2
+          if [ "$ed" = "nvim" ]; then
+            echo "  pacman -Sy neovim" >&2
+          else
+            echo "  pacman -Sy nano" >&2
+          fi
+          ;;
+        *)
+          echo "Use your distribution's package manager to install '$ed' as root." >&2
+          ;;
+      esac
+    else
+      echo "Use your system's package manager to install '$ed' as root." >&2
+    fi
+    echo "After the editor is installed, rerun mko." >&2
+    exit 1
+  fi
+
+  if [ "$SILENT" -eq 0 ]; then
+    printf "%b" "${YELLOW}Editor '$ed' is not installed. Attempt to install it now (requires sudo)? [y/N] ${RESET}"
+    read -r answer
+  else
+    answer="n"
+  fi
+
+  case "${answer:-}" in
+    y|Y|yes|YES) ;;
+    *)
+      echo "Error: editor '$ed' not found and installation not approved." >&2
+      exit 1
+      ;;
+  esac
+
+  if [ ! -r /etc/os-release ]; then
+    echo "Error: cannot detect distribution (/etc/os-release missing)." >&2
+    echo "Install '$ed' manually using your package manager, then rerun mko." >&2
+    exit 1
+  fi
+
+  # shellcheck source=/dev/null
+  . /etc/os-release
+
+  local pkg
+  case "$ed" in
+    nvim) pkg="neovim" ;;
+    nano) pkg="nano" ;;
+    *) echo "Error: unsupported editor '$ed'." >&2; exit 1 ;;
+  esac
+
+  info "${BLUE}Attempting to install '$ed' (package: $pkg)...${RESET}"
+
+  case "$ID" in
+    ubuntu|debian)
+      if ! sudo apt update || ! sudo apt install -y "$pkg"; then
+        echo "Error: failed to install '$pkg' via apt. You may not be in the sudoers list, or there was a network issue." >&2
+        echo "Install '$pkg' manually as root, then rerun mko." >&2
+        exit 1
+      fi
+      ;;
+    arch|manjaro|endeavouros|arcolinux)
+      if ! sudo pacman -Sy --needed --noconfirm "$pkg"; then
+        echo "Error: failed to install '$pkg' via pacman. You may not be in the sudoers list, or there was a network issue." >&2
+        echo "Install '$pkg' manually as root, then rerun mko." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Error: automatic installation is not configured for distribution '$ID'." >&2
+      echo "Install '$pkg' manually as root, then rerun mko." >&2
+      exit 1
+      ;;
+  esac
+
+  if ! command -v "$ed" >/dev/null 2>&1; then
+    echo "Error: '$ed' still not found after attempted installation." >&2
+    echo "Install it manually as root and rerun mko." >&2
+    exit 1
+  fi
+
+  info "${GREEN}Editor '$ed' installed successfully.${RESET}"
+}
+
+EDITOR_CMD="$(resolve_editor)"
+ensure_editor_installed "$EDITOR_CMD"
+
+# --- Main loop: create dirs/files; remember last file ---
+last_file=""
+
+for FILEPATH in "$@"; do
+  DIRPATH=$(dirname -- "$FILEPATH")
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    info "${GREEN}Would create directory:${RESET} $DIRPATH"
+    if [ ! -e "$FILEPATH" ]; then
+      info "${GREEN}Would create file:${RESET} $FILEPATH"
+    else
+      info "${YELLOW}File already exists:${RESET} $FILEPATH"
+    fi
+  else
+    if [ ! -d "$DIRPATH" ]; then
+      mkdir -p -- "$DIRPATH" || {
+        echo "Error: failed to create directory: $DIRPATH" >&2
+        exit 1
+      }
+      info "${GREEN}Created directory:${RESET} $DIRPATH"
+      log_msg "Created directory: $DIRPATH"
+    fi
+
+    if [ ! -e "$FILEPATH" ]; then
+      touch -- "$FILEPATH" || {
+        echo "Error: failed to create file: $FILEPATH" >&2
+        exit 1
+      }
+      info "${GREEN}Created file:${RESET} $FILEPATH"
+      log_msg "Created file: $FILEPATH"
+    else
+      info "${YELLOW}File exists:${RESET} $FILEPATH"
+      log_msg "File exists: $FILEPATH"
+    fi
+  fi
+
+  last_file="$FILEPATH"
+done
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  info "${BLUE}Dry run complete. Last file would be opened:${RESET} $last_file"
+  exit 0
+fi
+
+# --- Ask before opening existing non-empty last file (unless --force) ---
+if [ -f "$last_file" ] && [ -s "$last_file" ] && [ "$FORCE" -eq 0 ]; then
+  if [ "$SILENT" -eq 0 ]; then
+    printf "%b" "${YELLOW}File '$last_file' exists and is not empty. Open in $EDITOR_CMD? [y/N] ${RESET}"
+    read -r answer
+  else
+    answer="n"
+  fi
+
+  case "${answer:-}" in
+    y|Y|yes|YES)
+      ;;
+    *)
+      info "Aborted opening '$last_file'."
+      log_msg "Skipped opening non-empty file: $last_file"
+      exit 0
+      ;;
+  esac
+fi
+
+info "${BLUE}Opening in $EDITOR_CMD:${RESET} $last_file"
+log_msg "Opening file with $EDITOR_CMD: $last_file"
+
+"$EDITOR_CMD" "$last_file"
