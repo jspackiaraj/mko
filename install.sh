@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # install.sh for mko
-# Usage (recommended, auto-reload if possible):
+#
+# Recommended (auto-reload if possible):
 #   source <(curl -sSL https://raw.githubusercontent.com/jspackiaraj/mko/main/install.sh)
 #
-# Usage (classic):
+# Classic:
 #   curl -sSL https://raw.githubusercontent.com/jspackiaraj/mko/main/install.sh | bash
 #
-# Installs mko into $HOME/.local/bin and adds that directory to PATH
-# in the user's shell config if needed.
+# Installs or updates mko in $HOME/.local/bin and ensures that directory is on PATH.
 
 set -euo pipefail
 
@@ -23,27 +23,32 @@ fi
 REPO_RAW_BASE="https://raw.githubusercontent.com/jspackiaraj/mko/main"
 INSTALL_DIR="${HOME}/.local/bin"
 SCRIPT_NAME="mko"
+SCRIPT_PATH="${INSTALL_DIR}/${SCRIPT_NAME}"
 SCRIPT_URL="${REPO_RAW_BASE}/${SCRIPT_NAME}"
-
-echo "[mko] Installing mko to: ${INSTALL_DIR}"
 
 mkdir -p "${INSTALL_DIR}"
 
+if [ -f "${SCRIPT_PATH}" ]; then
+  echo "[mko] Existing ${SCRIPT_NAME} found at ${SCRIPT_PATH}."
+  echo "[mko] Updating to the latest version..."
+else
+  echo "[mko] Installing ${SCRIPT_NAME} to: ${INSTALL_DIR}"
+fi
+
 # Download the main script
 if command -v curl >/dev/null 2>&1; then
-  curl -sSL "${SCRIPT_URL}" -o "${INSTALL_DIR}/${SCRIPT_NAME}"
+  curl -sSL "${SCRIPT_URL}" -o "${SCRIPT_PATH}"
 elif command -v wget >/dev/null 2>&1; then
-  wget -qO "${INSTALL_DIR}/${SCRIPT_NAME}" "${SCRIPT_URL}"
+  wget -qO "${SCRIPT_PATH}" "${SCRIPT_URL}"
 else
   echo "[mko] Error: neither curl nor wget is available. Install one of them and try again." >&2
   return 1 2>/dev/null || exit 1
 fi
 
-chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
+chmod +x "${SCRIPT_PATH}"
 
 # Ensure INSTALL_DIR is in PATH
 ensure_path_line='export PATH="$HOME/.local/bin:$PATH"'
-
 in_path=0
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*) in_path=1 ;;
@@ -56,16 +61,11 @@ if [ "${in_path}" -eq 1 ]; then
 else
   # Try to guess which shell config file to update
   shell_name="$(basename "${SHELL:-}")"
-
   case "${shell_name}" in
-    bash)
-      target_rc="${HOME}/.bashrc"
-      ;;
-    zsh)
-      target_rc="${HOME}/.zshrc"
-      ;;
+    bash) target_rc="${HOME}/.bashrc" ;;
+    zsh)  target_rc="${HOME}/.zshrc" ;;
     *)
-      if [ -f "${HOME}/.bashrc" ]; then
+      if   [ -f "${HOME}/.bashrc" ]; then
         target_rc="${HOME}/.bashrc"
       elif [ -f "${HOME}/.zshrc" ]; then
         target_rc="${HOME}/.zshrc"
@@ -76,7 +76,6 @@ else
   esac
 
   echo "[mko] Adding ${INSTALL_DIR} to PATH in ${target_rc}"
-
   {
     echo ""
     echo "# Added by mko installer"
@@ -93,24 +92,24 @@ else
     echo "[mko] Shell configuration reloaded in this session."
   else
     echo "[mko] To activate mko in this shell, run:"
-    echo "       source ${target_rc}"
-    echo "     or open a new terminal."
+    echo " source ${target_rc}"
+    echo " or open a new terminal."
   fi
 fi
 
 # Post-install verification
 if command -v mko >/dev/null 2>&1; then
-  echo "[mko] Installation complete. Try:"
-  echo "       mko --help"
+  echo "[mko] Installation/update complete. Try:"
+  echo " mko --help"
 else
-  echo "[mko] Installation complete, but 'mko' is not yet on PATH in this shell."
+  echo "[mko] Installation/update complete, but 'mko' is not yet on PATH in this shell."
   if [ "${in_path}" -eq 1 ]; then
     echo "[mko] Your PATH already includes ${INSTALL_DIR}."
     echo "[mko] Start a new shell, or ensure your login/session actually uses that PATH."
   else
     if [ -n "${target_rc}" ]; then
       echo "[mko] Open a new terminal, or run:"
-      echo "       source ${target_rc}"
+      echo " source ${target_rc}"
     else
       echo "[mko] Ensure that ${INSTALL_DIR} is on your PATH in your shell configuration."
     fi
