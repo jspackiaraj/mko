@@ -2,14 +2,15 @@
 #
 # mko - create missing directories/files and open the last file in an editor.
 # Supports: dry-run, silent mode, logging, colours, multiple files,
-#           persistent editor choice, and auto-install of nano/nvim on
-#           Ubuntu / Arch-based systems.
+# persistent editor choice, and auto-install of nano/nvim on
+# Ubuntu / Arch-based systems.
 
 set -euo pipefail
 
 DRY_RUN=0
 SILENT=0
 FORCE=0
+EMPTY_BEFORE_OPEN=0
 EDITOR_OVERRIDE=""
 SET_EDITOR=""
 
@@ -25,20 +26,24 @@ Usage:
   mko [options] FILE...
 
 Options:
-  -n, --dry-run         Show what would be done; do not create or open anything.
-  -s, --silent          Suppress informational output (errors still shown).
-  -f, --force           Do not ask before opening an existing non-empty file.
-  -e, --editor EDITOR   Use EDITOR (nano or nvim) for this run only.
-      --set-editor E    Persistently set default editor to nano or nvim.
-  -h, --help            Show this help and exit.
+  -n, --dry-run               Show what would be done; do not create or open anything.
+  -s, --silent                Suppress informational output (errors still shown).
+  -f, --force, -y, --yes      Do not ask before opening an existing non-empty file.
+      --empty                 If the last file exists and is non-empty, empty it and open.
+  -e, --editor EDITOR         Use EDITOR (nano or nvim) for this run only.
+      --set-editor EDITOR     Persistently set default editor to nano or nvim.
+  -h, --help                  Show this help and exit.
 
 Behaviour:
   - Creates parent directories with mkdir -p.
   - Creates any missing files with touch.
   - Only opens the LAST file argument in the chosen editor.
   - Logs real actions to ~/.mko.log (not logged in dry-run mode).
-  - If nano/nvim is chosen but not installed, offers to install it on
-    Ubuntu / Arch-based systems (using sudo if available).
+  - If nano/nvim is chosen but not installed, offers to install it on Ubuntu / Arch-based
+    systems (using sudo if available).
+  - For existing non-empty last files:
+      * default: ask [y/N/d] before opening;
+      * 'd' (lowercase only) empties the file and then opens it.
 EOF
 }
 
@@ -51,21 +56,34 @@ while [ $# -gt 0 ]; do
     -s|--silent)
       SILENT=1
       ;;
-    -f|--force)
+    -f|--force|-y|--yes)
       FORCE=1
+      ;;
+    --empty)
+      EMPTY_BEFORE_OPEN=1
       ;;
     -e|--editor)
       shift || { echo "Error: --editor requires an argument." >&2; exit 1; }
       case "${1:-}" in
-        nano|nvim) EDITOR_OVERRIDE="$1" ;;
-        *) echo "Error: --editor must be 'nano' or 'nvim'." >&2; exit 1 ;;
+        nano|nvim)
+          EDITOR_OVERRIDE="$1"
+          ;;
+        *)
+          echo "Error: --editor must be 'nano' or 'nvim'." >&2
+          exit 1
+          ;;
       esac
       ;;
     --set-editor)
       shift || { echo "Error: --set-editor requires an argument." >&2; exit 1; }
       case "${1:-}" in
-        nano|nvim) SET_EDITOR="$1" ;;
-        *) echo "Error: --set-editor must be 'nano' or 'nvim'." >&2; exit 1 ;;
+        nano|nvim)
+          SET_EDITOR="$1"
+          ;;
+        *)
+          echo "Error: --set-editor must be 'nano' or 'nvim'." >&2
+          exit 1
+          ;;
       esac
       ;;
     -h|--help)
@@ -94,7 +112,10 @@ if [ -t 1 ] && [ "$SILENT" -eq 0 ]; then
   YELLOW='\033[0;33m'
   RESET='\033[0m'
 else
-  GREEN=''; BLUE=''; YELLOW=''; RESET=''
+  GREEN=''
+  BLUE=''
+  YELLOW=''
+  RESET=''
 fi
 
 info() {
@@ -105,9 +126,7 @@ log_msg() {
   # Log only real actions (no logging in dry-run mode)
   [ "$DRY_RUN" -eq 1 ] && return 0
   local msg="$1"
-  {
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$msg"
-  } >>"$LOG_FILE" 2>/dev/null || true
+  { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$msg"; } >>"$LOG_FILE" 2>/dev/null || true
 }
 
 # --- Handle persistent editor configuration ---
@@ -184,17 +203,17 @@ ensure_editor_installed() {
         ubuntu|debian)
           echo "Install '$ed' as root, for example:" >&2
           if [ "$ed" = "nvim" ]; then
-            echo "  apt update && apt install neovim" >&2
+            echo " apt update && apt install neovim" >&2
           else
-            echo "  apt update && apt install nano" >&2
+            echo " apt update && apt install nano" >&2
           fi
           ;;
         arch|manjaro|endeavouros|arcolinux)
           echo "Install '$ed' as root, for example:" >&2
           if [ "$ed" = "nvim" ]; then
-            echo "  pacman -Sy neovim" >&2
+            echo " pacman -Sy neovim" >&2
           else
-            echo "  pacman -Sy nano" >&2
+            echo " pacman -Sy nano" >&2
           fi
           ;;
         *)
@@ -216,7 +235,8 @@ ensure_editor_installed() {
   fi
 
   case "${answer:-}" in
-    y|Y|yes|YES) ;;
+    y|Y|yes|YES)
+      ;;
     *)
       echo "Error: editor '$ed' not found and installation not approved." >&2
       exit 1
@@ -244,14 +264,16 @@ ensure_editor_installed() {
   case "$ID" in
     ubuntu|debian)
       if ! sudo apt update || ! sudo apt install -y "$pkg"; then
-        echo "Error: failed to install '$pkg' via apt. You may not be in the sudoers list, or there was a network issue." >&2
+        echo "Error: failed to install '$pkg' via apt." >&2
+        echo "You may not be in the sudoers list, or there was a network issue." >&2
         echo "Install '$pkg' manually as root, then rerun mko." >&2
         exit 1
       fi
       ;;
     arch|manjaro|endeavouros|arcolinux)
       if ! sudo pacman -Sy --needed --noconfirm "$pkg"; then
-        echo "Error: failed to install '$pkg' via pacman. You may not be in the sudoers list, or there was a network issue." >&2
+        echo "Error: failed to install '$pkg' via pacman." >&2
+        echo "You may not be in the sudoers list, or there was a network issue." >&2
         echo "Install '$pkg' manually as root, then rerun mko." >&2
         exit 1
       fi
@@ -314,32 +336,58 @@ for FILEPATH in "$@"; do
   last_file="$FILEPATH"
 done
 
+# --- Dry-run summary for last file ---
 if [ "$DRY_RUN" -eq 1 ]; then
-  info "${BLUE}Dry run complete. Last file would be opened:${RESET} $last_file"
+  if [ -f "$last_file" ] && [ -s "$last_file" ] && [ "$EMPTY_BEFORE_OPEN" -eq 1 ]; then
+    info "${BLUE}Dry run complete. Last file would be emptied and opened:${RESET} $last_file"
+  else
+    info "${BLUE}Dry run complete. Last file would be opened:${RESET} $last_file"
+  fi
   exit 0
 fi
 
-# --- Ask before opening existing non-empty last file (unless --force) ---
-if [ -f "$last_file" ] && [ -s "$last_file" ] && [ "$FORCE" -eq 0 ]; then
-  if [ "$SILENT" -eq 0 ]; then
-    printf "%b" "${YELLOW}File '$last_file' exists and is not empty. Open in $EDITOR_CMD? [y/N] ${RESET}"
-    read -r answer
+# --- Existing non-empty last file handling (prompt / flags) ---
+if [ -f "$last_file" ] && [ -s "$last_file" ]; then
+  if [ "$EMPTY_BEFORE_OPEN" -eq 1 ]; then
+    : > "$last_file" || {
+      echo "Error: failed to empty file: $last_file" >&2
+      exit 1
+    }
+    info "${YELLOW}Emptied existing file before opening:${RESET} $last_file"
+    log_msg "Emptied existing file before opening: $last_file"
+  elif [ "$FORCE" -eq 1 ]; then
+    :
   else
-    answer="n"
-  fi
-
-  case "${answer:-}" in
-    y|Y|yes|YES)
-      ;;
-    *)
-      info "Aborted opening '$last_file'."
-      log_msg "Skipped opening non-empty file: $last_file"
+    if [ "$SILENT" -eq 1 ]; then
+      log_msg "Skipped opening non-empty file in silent mode: $last_file"
       exit 0
-      ;;
-  esac
+    fi
+
+    printf "%b" "${YELLOW}File '$last_file' exists and is not empty.
+Open in $EDITOR_CMD? [y/N/d] ${RESET}"
+    read -r answer
+
+    case "${answer:-}" in
+      y|Y|yes|YES)
+        # open as-is
+        ;;
+      d)
+        : > "$last_file" || {
+          echo "Error: failed to empty file: $last_file" >&2
+          exit 1
+        }
+        info "${YELLOW}Emptied existing file before opening:${RESET} $last_file"
+        log_msg "Emptied existing file before opening after prompt: $last_file"
+        ;;
+      *)
+        info "Aborted opening '$last_file'."
+        log_msg "Skipped opening non-empty file: $last_file"
+        exit 0
+        ;;
+    esac
+  fi
 fi
 
 info "${BLUE}Opening in $EDITOR_CMD:${RESET} $last_file"
 log_msg "Opening file with $EDITOR_CMD: $last_file"
-
 "$EDITOR_CMD" "$last_file"
